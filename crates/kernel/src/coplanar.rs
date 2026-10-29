@@ -993,10 +993,12 @@ pub(crate) fn faces_touch(a: &Body, b: &Body) -> bool {
     let (Ok(ma), Ok(mb)) = (a.tessellate_with(size * 1e-3, true), b.tessellate_with(size * 1e-3, true)) else { return false };
     let inside = ma.inside_index();
     let depth = (size * 1e-4).max(1e-6);
-    mb.triangles.iter().zip(&mb.tri_face).take(100_000).any(|(t, fi)| {
-        let Some((_, n)) = faces.iter().find(|(i, _)| *i == *fi as usize) else { return false };
-        mb.tri(t).is_some_and(|[p, q, r]| inside.contains((p + q + r) / 3.0 + *n * depth))
-    })
+    // The triangles of those faces, sampled evenly through all of them (not the first of the
+    // mesh: a contact in a face listed late would go unseen).
+    let tris: Vec<(&[u32; 3], Vec3)> =
+        mb.triangles.iter().zip(&mb.tri_face).filter_map(|(t, fi)| faces.iter().find(|(i, _)| *i == *fi as usize).map(|(_, n)| (t, *n))).collect();
+    let step = tris.len().div_ceil(MAX_SAMPLED_TRIANGLES).max(1);
+    tris.iter().step_by(step).any(|(t, n)| mb.tri(t).is_some_and(|[p, q, r]| inside.contains((p + q + r) / 3.0 + *n * depth)))
 }
 
 /// Does `r` hold a skin of no thickness: a planar face lying on another of its planar faces that
@@ -1010,32 +1012,47 @@ pub(crate) fn faces_touch(a: &Body, b: &Body) -> bool {
 pub(crate) fn has_skin(r: &Body, mesh: &solidcraft_geom::Mesh) -> bool {
     let size = r.size();
     let tol = (size * 1e-7).max(1e-9) * 10.0;
-    let p = planes(r);
-    if p.len() > MAX_SKIN_FACES {
-        return false;
-    }
-    let paired: HashMap<usize, Vec3> = p
-        .iter()
-        .filter(|(i, x)| p.iter().any(|(j, y)| i != j && x.n.dot(y.n) < -1.0 + 1e-9 && (x.d + y.d).abs() < tol))
-        .map(|(i, x)| (*i, x.n))
-        .collect();
+    let paired = opposed(planes(r), tol);
     if paired.is_empty() {
         return false;
     }
     let inside = mesh.inside_index();
     let depth = (size * 1e-4).max(1e-6);
+    // The paired faces' triangles, sampled evenly through all of them; each sample stands for
+    // `step` triangles of the open area.
+    let tris: Vec<(&[u32; 3], Vec3)> =
+        mesh.triangles.iter().zip(&mesh.tri_face).filter_map(|(t, face)| paired.get(&(*face as usize)).map(|n| (t, *n))).collect();
+    let step = tris.len().div_ceil(MAX_SAMPLED_TRIANGLES).max(1);
     let mut open = 0.0;
-    for (t, face) in mesh.triangles.iter().zip(&mesh.tri_face).take(100_000) {
-        let (Some(n), Some([a, b, c])) = (paired.get(&(*face as usize)), mesh.tri(t)) else { continue };
+    for (t, n) in tris.iter().step_by(step) {
+        let Some([a, b, c]) = mesh.tri(t) else { continue };
         if !inside.contains((a + b + c) / 3.0 - *n * depth) {
-            open += (b - a).cross(c - a).len() * 0.5;
+            open += (b - a).cross(c - a).len() * 0.5 * step as f64;
         }
     }
     open > (size * size * 1e-6).max(1e-9)
 }
 
-/// The most planar faces [`has_skin`] pairs up (every pair is compared).
-const MAX_SKIN_FACES: usize = 2000;
+/// The planar faces with another face lying in their plane and facing the other way, each with
+/// its normal. Sorted by offset, the other face (offset −d) is found by search, not by comparing
+/// every pair: no number of faces leaves one unchecked.
+fn opposed(mut p: Vec<(usize, PlaneFace)>, tol: f64) -> HashMap<usize, Vec3> {
+    p.sort_by(|x, y| x.1.d.total_cmp(&y.1.d));
+    p.iter()
+        .filter(|(i, x)| {
+            // |x.d + y.d| < tol
+            let from = p.partition_point(|(_, y)| y.d <= -x.d - tol);
+            p.iter().skip(from).take_while(|(_, y)| y.d < -x.d + tol).any(|(j, y)| i != j && x.n.dot(y.n) < -1.0 + 1e-9)
+        })
+        .map(|(i, x)| (*i, x.n))
+        .collect()
+}
+
+/// Most triangles [`faces_touch`] and [`has_skin`] test, sampled evenly through the faces they look at.
+const MAX_SAMPLED_TRIANGLES: usize = 100_000;
+
+/// Most points [`backed`] tests: one in every triangle of the faces, at least.
+const MAX_BACKED_POINTS: usize = 16_000;
 
 /// The triangles of `tool`'s faces in the plane (`m`, `d`), `m` their outward normal, each with
 /// how far its face reaches past it sideways. A face bounded by straight edges is its
@@ -1065,19 +1082,25 @@ fn backed(a: &Body, b: &Body, m: Vec3, d: f64, depth: f64) -> bool {
     let faces: Vec<usize> = planes(b).into_iter().filter(|(_, p)| p.n.dot(m) > 1.0 - 1e-9 && (p.d - d).abs() < tol).map(|(i, _)| i).collect();
     let (Ok(ma), Ok(mb)) = (a.tessellate_with(size * 1e-3, true), b.tessellate_with(size * 1e-3, true)) else { return false };
     let inside = ma.inside_index();
-    let mut points = Vec::new();
-    for (t, fi) in mb.triangles.iter().zip(&mb.tri_face) {
-        if !faces.contains(&(*fi as usize)) {
-            continue;
-        }
-        let Some([p, q, r]) = mb.tri(t) else { continue };
-        let c = (p + q + r) / 3.0;
-        points.extend([c, c.lerp(p, 0.8), c.lerp(q, 0.8), c.lerp(r, 0.8)]);
-        if points.len() > 4000 {
-            break;
+    let tris: Vec<[Vec3; 3]> =
+        mb.triangles.iter().zip(&mb.tri_face).filter(|(_, fi)| faces.contains(&(**fi as usize))).filter_map(|(t, _)| mb.tri(t)).collect();
+    // Every triangle is looked at: a hole under one left out would be filled. Too many for that
+    // and the face is not known to be backed (the other retries take the join).
+    if tris.is_empty() || tris.len() > MAX_BACKED_POINTS {
+        return false;
+    }
+    // Each centre, and the corners of triangles spread evenly through the faces as the budget allows.
+    let spare = MAX_BACKED_POINTS - tris.len();
+    let every = if spare == 0 { usize::MAX } else { (3 * tris.len()).div_ceil(spare).max(1) };
+    let mut points = Vec::with_capacity(MAX_BACKED_POINTS);
+    for (i, [p, q, r]) in tris.iter().enumerate() {
+        let c = (*p + *q + *r) / 3.0;
+        points.push(c);
+        if i % every == 0 {
+            points.extend([c.lerp(*p, 0.8), c.lerp(*q, 0.8), c.lerp(*r, 0.8)]);
         }
     }
-    !points.is_empty() && points.iter().all(|p| [0.05, 0.5, 1.0].iter().all(|k| inside.contains(*p + m * (depth * k))))
+    points.iter().all(|p| [0.05, 0.5, 1.0].iter().all(|k| inside.contains(*p + m * (depth * k))))
 }
 
 /// The faces of `body` lying in the plane (n, d), facing along n.

@@ -58,3 +58,31 @@ fn rounds_that_fit_are_closed() {
     assert_eq!(b.crossed_face_loops().unwrap(), 0);
     assert_eq!(b.face_count(), p.face_count() + edges().len());
 }
+
+/// The crossing test behind refused rounds looks at every segment of a face: one with more
+/// segments than the old budget (20 000) is not passed over, the sweep finds what comparing
+/// every pair finds, and past its budget of comparisons the answer is "not known".
+#[test]
+fn a_crossing_is_found_among_many_segments() {
+    use crate::body::{Segment2, segments_cross};
+    // A zigzag of 30 000 segments along u, clear of itself.
+    let zigzag: Vec<Segment2> = (0..30_000).map(|i| ((i as f64, (i % 2) as f64), (i as f64 + 1.0, ((i + 1) % 2) as f64))).collect();
+    assert_eq!(segments_cross(&zigzag, 1e-9, usize::MAX), Some(false));
+    // One more segment, through the last of them.
+    let mut crossed = zigzag.clone();
+    crossed.push(((29_999.2, -1.0), (29_999.8, 2.0)));
+    assert_eq!(segments_cross(&crossed, 1e-9, usize::MAX), Some(true));
+    assert_eq!(segments_cross(&crossed, 1e-9, 10), None);
+    // Small random sets: the same answer as every pair compared.
+    let mut seed = 7u64;
+    let mut next = || {
+        seed = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1_442_695_040_888_963_407);
+        (seed >> 11) as f64 / (1u64 << 53) as f64 * 10.0
+    };
+    for _ in 0..200 {
+        let segs: Vec<Segment2> = (0..12).map(|_| ((next(), next()), (next(), next()))).collect();
+        let every_pair =
+            segs.iter().enumerate().any(|(i, s)| segs.iter().skip(i + 1).any(|t| segments_cross(&[*s, *t], 1e-9, usize::MAX) == Some(true)));
+        assert_eq!(segments_cross(&segs, 1e-9, usize::MAX), Some(every_pair), "{segs:?}");
+    }
+}

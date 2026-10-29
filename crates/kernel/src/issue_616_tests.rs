@@ -116,6 +116,10 @@ fn the_retry_guard_refuses_changes_away_from_the_tool() {
     assert!(crate::boolean_guard::check_retry(&target, &tool, BoolOp::Cut, None).is_err());
     assert!(crate::boolean_guard::check_retry(&tool, &target, BoolOp::Cut, None).is_err());
     assert!(crate::boolean_guard::check_retry(&tool, &bx([-1., -1., 4.], [6., 6., 6.]), BoolOp::Cut, None).is_ok());
+    // Nor while the tool's box holds the target but the tool does not: a ring around it.
+    let ring = boolean(&bx([0., 0., -1.], [22., 22., 4.]), &bx([5., 5., -2.], [12., 12., 6.]), BoolOp::Cut).unwrap().unwrap();
+    let inside_the_ring = bx([10., 10., 0.], [2., 2., 2.]);
+    assert!(crate::boolean_guard::check_retry(&inside_the_ring, &ring, BoolOp::Cut, None).is_err());
 }
 
 /// Random small boxes joined flush to the walls and floor of a shelled box with rounded corners

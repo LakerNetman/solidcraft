@@ -141,17 +141,26 @@ pub(crate) fn check_retry(a: &Body, b: &Body, op: BoolOp, result: Option<&Body>)
     let Some(r) = result else {
         // Nothing left: only a cut whose tool covers the whole target (to within the meshes'
         // chords: a tool touching a round side of the target).
+        // The tool's box enclosing the target's is not enough (a ring around a smaller target):
+        // the target's surface, sampled evenly, must lie inside the tool or on its surface.
+        let empty = || Err(bad(op, "it came out empty".into()));
+        if op != BoolOp::Cut {
+            return empty();
+        }
         let chord = a.size().max(b.size()) * 1e-3;
-        let (Ok(ma), Ok(mb)) = (a.tessellate(chord), b.tessellate(chord)) else { return Ok(()) };
-        let (ba, bb) = (ma.bounds(), mb.bounds());
-        let tol = 2.0 * chord;
-        let within = ba.min.x >= bb.min.x - tol
-            && ba.min.y >= bb.min.y - tol
-            && ba.min.z >= bb.min.z - tol
-            && ba.max.x <= bb.max.x + tol
-            && ba.max.y <= bb.max.y + tol
-            && ba.max.z <= bb.max.z + tol;
-        return if op == BoolOp::Cut && within { Ok(()) } else { Err(bad(op, "it came out empty".into())) };
+        let (Ok(ma), Ok(mb)) = (a.tessellate(chord), b.tessellate(chord)) else {
+            return Err(bad(op, "it came out empty, and that could not be checked".into()));
+        };
+        let Some(surface) = Near::new(&mb, 2.0 * chord) else { return empty() };
+        let inside = mb.inside_index();
+        let step = ma.triangles.len().div_ceil(MAX_SAMPLES).max(1);
+        let covered = ma
+            .triangles
+            .iter()
+            .step_by(step)
+            .filter_map(|t| ma.tri(t))
+            .all(|[p, q, r]| [(p + q + r) / 3.0, p, q, r].into_iter().all(|x| inside.contains(x) || surface.close(x)));
+        return if covered && !ma.triangles.is_empty() { Ok(()) } else { empty() };
     };
     if r.solid.boundaries().iter().any(|s| s.shell_condition() != truck_modeling::ShellCondition::Closed) {
         return Err(bad(op, "the result is not closed".into()));

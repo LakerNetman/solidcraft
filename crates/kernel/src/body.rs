@@ -551,6 +551,43 @@ thread_local! {
     pub(crate) static REPHASED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
+/// A straight segment in a face's plane, by its ends' (u, v).
+pub(crate) type Segment2 = ((f64, f64), (f64, f64));
+
+/// Does any segment properly cross another (each one's ends strictly on either side of the
+/// other, by more than `tol`)? Swept along u, a segment is compared only with those that start
+/// before it ends, as segments apart in u cannot cross. `None` when that takes more than
+/// `max_pairs` comparisons: not known either way.
+pub(crate) fn segments_cross(segs: &[Segment2], tol: f64, max_pairs: usize) -> Option<bool> {
+    let side = |a: (f64, f64), b: (f64, f64), p: (f64, f64)| {
+        let (dx, dy) = (b.0 - a.0, b.1 - a.1);
+        let len = (dx * dx + dy * dy).sqrt();
+        if len <= tol { 0.0 } else { (dx * (p.1 - a.1) - dy * (p.0 - a.0)) / len }
+    };
+    let cross = |s: &Segment2, t: &Segment2| {
+        let (d1, d2) = (side(s.0, s.1, t.0), side(s.0, s.1, t.1));
+        let (d3, d4) = (side(t.0, t.1, s.0), side(t.0, t.1, s.1));
+        ((d1 > tol && d2 < -tol) || (d1 < -tol && d2 > tol)) && ((d3 > tol && d4 < -tol) || (d3 < -tol && d4 > tol))
+    };
+    let span = |s: &Segment2| (s.0.0.min(s.1.0), s.0.0.max(s.1.0));
+    let mut by_u: Vec<&Segment2> = segs.iter().collect();
+    by_u.sort_by(|s, t| span(s).0.total_cmp(&span(t).0));
+    let mut pairs = 0usize;
+    for (i, s) in by_u.iter().enumerate() {
+        let end = span(s).1;
+        for t in by_u.iter().skip(i + 1).take_while(|t| span(t).0 <= end) {
+            pairs += 1;
+            if pairs > max_pairs {
+                return None;
+            }
+            if cross(s, t) {
+                return Some(true);
+            }
+        }
+    }
+    Some(false)
+}
+
 /// The volume one closed shell encloses, signed by the way its faces face (positive when they
 /// face out of it), from a mesh as coarse as the orientation mesh of a solid of its size.
 /// `None` when it cannot be meshed.
@@ -1417,7 +1454,10 @@ impl Body {
         if self.is_mesh() {
             return Ok(Vec::new());
         }
-        const MAX_SEGMENTS: usize = 20_000;
+        // A face with more segments, or more pairs to compare, than these is reported as crossed:
+        // not known to be clear, it is never passed over unchecked.
+        const MAX_SEGMENTS: usize = 200_000;
+        const MAX_PAIRS: usize = 50_000_000;
         let size = self.size();
         let tol = (size * 1e-6).max(1e-9);
         let chord = (size * 1e-3).max(1e-4);
@@ -1451,30 +1491,14 @@ impl Body {
                     segs.extend(pts.windows(2).filter_map(|q| Some((flat(*q.first()?), flat(*q.get(1)?)))));
                 }
                 total = total.saturating_add(segs.len());
+                loops.push(segs);
                 if total > MAX_SEGMENTS {
                     break;
                 }
-                loops.push(segs);
             }
-            if total > MAX_SEGMENTS {
-                continue;
-            }
-            // Proper crossings only: each segment's ends strictly on either side of the other.
-            let side = |a: (f64, f64), b: (f64, f64), p: (f64, f64)| {
-                let (dx, dy) = (b.0 - a.0, b.1 - a.1);
-                let len = (dx * dx + dy * dy).sqrt();
-                if len <= tol { 0.0 } else { (dx * (p.1 - a.1) - dy * (p.0 - a.0)) / len }
-            };
-            let cross = |s: &((f64, f64), (f64, f64)), t: &((f64, f64), (f64, f64))| {
-                let (d1, d2) = (side(s.0, s.1, t.0), side(s.0, s.1, t.1));
-                let (d3, d4) = (side(t.0, t.1, s.0), side(t.0, t.1, s.1));
-                ((d1 > tol && d2 < -tol) || (d1 < -tol && d2 > tol)) && ((d3 > tol && d4 < -tol) || (d3 < -tol && d4 > tol))
-            };
-            let all: Vec<(usize, &((f64, f64), (f64, f64)))> =
-                loops.iter().enumerate().flat_map(|(l, segs)| segs.iter().map(move |s| (l, s))).collect();
-            let bad = all.iter().enumerate().any(|(i, (_, s))| all.iter().skip(i + 1).any(|(_, t)| cross(s, t)));
-            if bad {
-                let ends: Vec<(f64, f64)> = all.iter().map(|(_, s)| s.0).collect();
+            let all: Vec<Segment2> = loops.into_iter().flatten().collect();
+            if total > MAX_SEGMENTS || segments_cross(&all, tol, MAX_PAIRS) != Some(false) {
+                let ends: Vec<(f64, f64)> = all.iter().map(|s| s.0).collect();
                 let k = ends.len().max(1) as f64;
                 let (su, sv) = ends.iter().fold((0.0, 0.0), |acc, p| (acc.0 + p.0, acc.1 + p.1));
                 crossed.push(o + u * (su / k) + v * (sv / k));

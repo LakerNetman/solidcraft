@@ -154,3 +154,30 @@ fn trimming_at_a_plane_with_nothing_beyond_it() {
     assert!((measure(&same).unwrap().volume - measured).abs() < measured * 1e-9);
     assert!(crate::coplanar::trim_exact(&dome, -Vec3::Z, 5.0).is_err());
 }
+
+/// Faces back to back in one plane are paired by search: a body with more planar faces than the
+/// old budget (2000, past which no skin was looked for) has every pair found, as comparing every
+/// pair finds them.
+#[test]
+fn faces_back_to_back_are_paired_however_many_there_are() {
+    use super::{PlaneFace, opposed};
+    let tol = 1e-6;
+    let mut faces = Vec::new();
+    for k in 0..3000 {
+        faces.push((faces.len(), PlaneFace { n: Vec3::Z, d: k as f64 * 0.5 }));
+        // Every third plane also has a face looking down, and every fifth one just off the plane.
+        if k % 3 == 0 {
+            faces.push((faces.len(), PlaneFace { n: -Vec3::Z, d: -(k as f64 * 0.5) }));
+        }
+        if k % 5 == 0 {
+            faces.push((faces.len(), PlaneFace { n: -Vec3::Z, d: -(k as f64 * 0.5) + 10.0 * tol }));
+        }
+    }
+    let every_pair: std::collections::HashMap<usize, Vec3> = faces
+        .iter()
+        .filter(|(i, x)| faces.iter().any(|(j, y)| i != j && x.n.dot(y.n) < -1.0 + 1e-9 && (x.d + y.d).abs() < tol))
+        .map(|(i, x)| (*i, x.n))
+        .collect();
+    assert_eq!(every_pair.len(), 2000);
+    assert_eq!(opposed(faces, tol), every_pair);
+}
