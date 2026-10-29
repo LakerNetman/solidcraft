@@ -74,7 +74,7 @@ fn file_kind_tells_designs_and_drawings_apart() {
     let d = drawing();
     let cases = [
         (design, FileKind::Design),
-        (write_design(&doc), FileKind::Design),
+        (write_design(&doc).unwrap(), FileKind::Design),
         (write_drawing_container(&d).unwrap(), FileKind::Drawing),
         (d.to_json().unwrap().into_bytes(), FileKind::Drawing),
         (b"{\"format\": \"solidcraft-drawing/1\"}".to_vec(), FileKind::Drawing),
@@ -94,7 +94,7 @@ fn a_design_is_never_read_as_a_drawing_nor_a_drawing_as_a_design() {
         assert!(error(read_design(&bytes)).contains("is a SolidCraft drawing, not a design"));
     }
     let doc = Document::new("Plate");
-    for bytes in [write_design_container(&doc).unwrap(), write_design(&doc)] {
+    for bytes in [write_design_container(&doc).unwrap(), write_design(&doc).unwrap()] {
         assert!(error(read_drawing(&bytes)).contains("is a SolidCraft design, not a drawing"));
     }
 }

@@ -3854,6 +3854,13 @@ impl Default for Document {
     }
 }
 
+/// The design JSON about to be saved opens again in this build, read exactly as a file is read.
+pub fn check_reopens(text: &str) -> Result<()> {
+    Document::from_json(text)
+        .map(|_| ())
+        .map_err(|e| DocError::Invalid(format!("the design was not saved because it could not be opened again: {e}")))
+}
+
 impl Document {
     /// The next shared identity, including auxiliary lists written by older versions or
     /// populated programmatically. Reading it does not reserve an id (used by joint previews).
@@ -4361,6 +4368,23 @@ impl Document {
             return serde_json::to_string_pretty(&value).unwrap_or_default();
         }
         serde_json::to_string_pretty(self).unwrap_or_default()
+    }
+
+    /// The design file's JSON, refused when it could not be written or when this build could
+    /// not open it again (a value a command let through that the reader rejects): the save
+    /// reports why instead of writing a file that will not reopen.
+    pub fn to_saved_json(&self) -> Result<String> {
+        let unwritten = |e: serde_json::Error| DocError::Invalid(format!("the design could not be written: {e}"));
+        // As [`Document::to_json`]: what a newer build wrote goes back into the file as it came.
+        let text = if self.newer_file.is_some() {
+            let mut value = serde_json::to_value(self).map_err(unwritten)?;
+            crate::newer_file::restore(self, &mut value);
+            serde_json::to_string_pretty(&value).map_err(unwritten)?
+        } else {
+            serde_json::to_string_pretty(self).map_err(unwritten)?
+        };
+        check_reopens(&text)?;
+        Ok(text)
     }
 
     pub fn feature(&self, id: u64) -> Option<&Feature> {

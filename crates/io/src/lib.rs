@@ -997,9 +997,9 @@ pub fn read_design(bytes: &[u8]) -> Result<Document> {
     })
 }
 
-/// Design file bytes.
-pub fn write_design(doc: &Document) -> Vec<u8> {
-    doc.to_json().into_bytes()
+/// Design file bytes, refused when the design would not open again.
+pub fn write_design(doc: &Document) -> Result<Vec<u8>> {
+    Ok(doc.to_saved_json()?.into_bytes())
 }
 
 /// Parse a binary or ASCII STL (used by tests and round-trip checks): triangles.
@@ -1350,7 +1350,7 @@ mod tests {
         let (doc, m) = model();
         let s = String::from_utf8(export(&m.state(), &[], Format::Step, "t").unwrap()).unwrap();
         assert!(s.starts_with("ISO-10303-21;") && s.contains("CLOSED_SHELL"));
-        let back = read_design(&write_design(&doc)).unwrap();
+        let back = read_design(&write_design(&doc).unwrap()).unwrap();
         assert_eq!(back, doc);
         assert!(read_design(b"\xff\xfe").is_err());
         let dwg = read_design(b"AC1032\0\0\0\0\0\xff\xfe").unwrap_err().to_string();
