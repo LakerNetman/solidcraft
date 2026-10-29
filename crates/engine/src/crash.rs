@@ -572,7 +572,8 @@ pub(crate) fn command_done(
     let pending: Vec<Panic> = PENDING.with(|q| std::mem::take(&mut *q.borrow_mut()));
     for p in pending {
         let kind = if p.recovered { "kernel_panic_recovered" } else { "command_panic" };
-        let design = solidcraft_io::write_design(before);
+        // The design as it was, kept even when it would not reopen: that may be the bug.
+        let design = before.to_json().into_bytes();
         let replay = json!({ "commands": [{ "command": id, "params": params }] });
         let recent = if journaled { read_live_journal(state).recent } else { Vec::new() };
         let extra = Extra {

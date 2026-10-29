@@ -520,7 +520,7 @@ outer
             let _ = crate::read_design_thumbnail(b);
             crate::read_design(b).ok().map(|d| d.features.len())
         });
-        let json = crate::write_design(&doc);
+        let json = crate::write_design(&doc).unwrap();
         assert!(crate::read_design(&json).is_ok());
         survives("design JSON", &mutations(&json, true, 0xde6), usize::MAX, |b| crate::read_design(b).ok().map(|d| d.features.len()));
     }

@@ -1374,3 +1374,26 @@ fn a_fillet_folded_through_flat_is_refused_like_a_fold() {
     }
     assert!(refused.is_some_and(|s| (7..=9).contains(&s)), "refused at {refused:?}");
 }
+
+/// A sketch stops at `MAX_CURVES` (a design file holding more is not opened), and the generic
+/// add refuses the degenerate lines and circles the dedicated ones do.
+#[test]
+fn curves_stop_at_the_cap_and_degenerate_kinds_are_refused() {
+    let mut sk = Sketch::new();
+    let a = sk.add_point(v(0.0, 0.0), None).unwrap();
+    let b = sk.add_point(v(10.0, 0.0), None).unwrap();
+    assert!(sk.add_curve(CurveKind::Line { a, b: a }, None).is_err());
+    for r in [0.0, -1.0, f64::NAN, f64::INFINITY] {
+        assert!(sk.add_curve(CurveKind::Circle { c: a, r }, None).is_err(), "radius {r}");
+    }
+    let first = sk.add_line_pts(a, b, None).unwrap();
+    let line = sk.curves[first].clone();
+    sk.curves.extend((1..MAX_CURVES).map(|i| Curve { id: format!("filler{i}"), ..line.clone() }));
+    assert_eq!(sk.curves.len(), MAX_CURVES);
+    let points = sk.points.len();
+    assert_eq!(sk.add_line_pts(a, b, None), Err(SketchError::TooLarge));
+    assert_eq!(sk.add_line(v(0.0, 5.0), v(5.0, 5.0), None, None, None), Err(SketchError::TooLarge));
+    assert_eq!(sk.add_circle(v(0.0, 0.0), 1.0, Some(a), None), Err(SketchError::TooLarge));
+    assert_eq!(sk.add_curve(CurveKind::Line { a, b }, None), Err(SketchError::TooLarge));
+    assert_eq!(sk.points.len(), points, "a refused curve adds no points");
+}

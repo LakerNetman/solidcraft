@@ -677,9 +677,12 @@ fn view_save(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "view.save";
     let c = p.get("camera").ok_or_else(|| bad(cmd, "`camera` is required"))?;
     let mut v: solidcraft_doc::NamedView = serde_json::from_value(c.clone()).map_err(|e| bad(cmd, format!("bad camera: {e}")))?;
-    let ok = [v.target.x, v.target.y, v.target.z, v.yaw, v.pitch, v.distance, v.fov].iter().all(|x| x.is_finite()) && v.distance > 0.0;
+    // Within what a design file may hold, or the design would save and not reopen.
+    let limit = solidcraft_doc::format::MAX_REAL;
+    let ok =
+        [v.target.x, v.target.y, v.target.z, v.yaw, v.pitch, v.distance, v.fov].iter().all(|x| x.is_finite() && x.abs() <= limit) && v.distance > 0.0;
     if !ok {
-        return Err(bad(cmd, "the camera must be finite with a positive distance"));
+        return Err(bad(cmd, "the camera must be finite, within ±1e9, with a positive distance"));
     }
     let n = s.doc.named_views.len();
     v.name = match str_(p, "name").map(str::trim).filter(|n| !n.is_empty()) {
@@ -1556,9 +1559,17 @@ mod tests {
         assert_eq!(back.named_views[0].target.z, 3.0);
         run(&mut s, "view.delete", json!({"view": "Detail"}));
         assert_eq!(run(&mut s, "view.list", json!({}))["views"].as_array().unwrap().len(), 1);
-        for p in [json!({}), json!({"camera": {"target": [0, 0, 0], "yaw": 0, "pitch": 0, "distance": -1}}), json!({"camera": "x"})] {
+        for p in [
+            json!({}),
+            json!({"camera": {"target": [0, 0, 0], "yaw": 0, "pitch": 0, "distance": -1}}),
+            json!({"camera": "x"}),
+            // Beyond what a design file holds: the design would save and not reopen.
+            json!({"camera": {"target": [1e12, 0, 0], "yaw": 0, "pitch": 0, "distance": 100}}),
+            json!({"camera": {"target": [0, 0, 0], "yaw": 0, "pitch": 0, "distance": 1e15}}),
+        ] {
             assert!(s.execute("view.save", &p).is_err(), "{p}");
         }
+        solidcraft_doc::Document::from_json(&s.doc.to_saved_json().unwrap()).unwrap();
         run(&mut s, "edit.undo", json!({}));
         assert_eq!(s.doc.named_views.len(), 2);
     }

@@ -384,6 +384,10 @@ fn require_contiguous_groups(doc: &solidcraft_doc::Document, cmd: &str) -> Resul
 
 fn group(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "timeline.group";
+    // A design file holds at most this many folders: one more would save and not reopen.
+    if s.doc.timeline_groups.len() >= solidcraft_doc::MAX_FEATURES {
+        return Err(bad(cmd, format!("a design holds at most {} timeline folders", solidcraft_doc::MAX_FEATURES)));
+    }
     let mut features = group_features(s, p, false, cmd)?;
     let groups = group_ids(s, p, false, cmd)?;
     let name = match str_(p, "name").map(str::trim).filter(|name| !name.is_empty()) {

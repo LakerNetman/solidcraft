@@ -609,7 +609,12 @@ pub(crate) fn value(s: &Session, v: &Value, angle: bool, cmd: &str) -> Result<f6
         _ => None,
     }
     .ok_or_else(|| bad(cmd, "values must be numbers or expressions"))?;
-    s.doc.eval(&e, kind).map_err(|e| bad(cmd, e.to_string()))
+    let x = s.doc.eval(&e, kind).map_err(|e| bad(cmd, e.to_string()))?;
+    // An expression gets the bound a number has, or the design would save and not reopen.
+    if x.abs() >= solidcraft_doc::format::MAX_REAL {
+        return Err(bad(cmd, "values must be within ±1e9"));
+    }
+    Ok(x)
 }
 
 /// The expression a number was typed as, kept so the joint follows the parameters it names

@@ -432,7 +432,7 @@ fn write_bytes(
 ) -> Result<Value> {
     let bytes = match format {
         "container" => s.design_container_at(Some(path), compression, preview, cache)?,
-        "json" => solidcraft_io::write_design(&s.design_at(Some(path))),
+        "json" => solidcraft_io::write_design(&s.design_at(Some(path)))?,
         _ => return Err(bad("file.save", "format must be container or json")),
     };
     // Atomic, keeping the version being replaced as `<file>.bak`.
@@ -607,7 +607,7 @@ fn export_to(s: &Session, path: &str, format: Format, bodies: &[String], quality
         if !bodies.is_empty() {
             return Err(bad("file.export", "design JSON exports the complete document; omit bodies"));
         }
-        solidcraft_io::write_design(&s.design())
+        solidcraft_io::write_design(&s.design())?
     } else if format == Format::Step && bodies.is_empty() && !s.doc.occurrences.is_empty() {
         solidcraft_io::step_assembly(&s.doc, &s.doc.painted(&s.model.state()), &name)?
     } else {
@@ -1457,7 +1457,7 @@ mod tests {
         let dir = name_dir("open");
         for (stored, file) in [("Untitled", "hinge.solidcraft"), ("", "spacer.json")] {
             let path = dir.join(file);
-            let bytes = solidcraft_io::write_design(&Document::new(stored));
+            let bytes = solidcraft_io::write_design(&Document::new(stored)).unwrap();
             std::fs::write(&path, bytes).unwrap();
             let mut s = Session::default();
             let r = s.execute("doc.open", &json!({"path":path})).unwrap();

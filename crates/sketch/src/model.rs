@@ -852,7 +852,12 @@ impl Sketch {
         Ok(self.points.len() - 1)
     }
 
+    /// The id of a curve about to be added, refused once the sketch holds [`MAX_CURVES`] (a
+    /// design file with more is not opened).
     pub(crate) fn curve_id(&mut self, id: Option<&str>, prefix: &str) -> Result<String> {
+        if self.curves.len() >= MAX_CURVES {
+            return Err(SketchError::TooLarge);
+        }
         match id {
             Some(i) if self.id_taken(i) => Err(SketchError::Duplicate(i.into())),
             Some("") => Err(SketchError::Invalid("empty id".into())),
@@ -1550,8 +1555,18 @@ impl Sketch {
             return Err(SketchError::Invalid("curve point out of range".into()));
         }
         let prefix = match &kind {
-            CurveKind::Line { .. } => "l",
-            CurveKind::Circle { .. } => "c",
+            CurveKind::Line { a, b } => {
+                if a == b {
+                    return Err(SketchError::Invalid("line needs two distinct points".into()));
+                }
+                "l"
+            }
+            CurveKind::Circle { r, .. } => {
+                if !radius_in_range(*r) {
+                    return Err(SketchError::Invalid(format!("radius {r}")));
+                }
+                "c"
+            }
             CurveKind::Arc { .. } => "a",
             CurveKind::Ellipse { m, c, r } => {
                 if m == c || !radius_in_range(*r) {

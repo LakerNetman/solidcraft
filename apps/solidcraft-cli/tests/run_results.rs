@@ -169,7 +169,9 @@ fn unknown_pending_concepts_preserve_the_open_design_and_output_files() {
         let mut experimental = doc::Document::new("Experimental");
         experimental.format = doc::format::format_string(version);
         experimental.format_pending.push("experimental-card".into());
-        for (extension, bytes) in [("json", io::write_design(&experimental)), ("solidcraft", io::write_design_container(&experimental).unwrap())] {
+        for (extension, bytes) in
+            [("json", io::write_design(&experimental).unwrap()), ("solidcraft", io::write_design_container(&experimental).unwrap())]
+        {
             let source = dir.0.join(format!("experimental-{version}.{extension}"));
             std::fs::write(&source, &bytes).unwrap();
             let mut session = Session::default();
@@ -221,7 +223,7 @@ fn known_pending_concepts_and_released_files_round_trip_with_inert_metadata() {
     experimental.format_pending.push("reserved-body-names".into());
     for (index, mut document) in [current, released, experimental].into_iter().enumerate() {
         document.metadata.0.insert("com.example.tool".into(), json!({"format_pending": ["experimental-card"], "physical_card": {"density": 700}}));
-        for (extension, bytes) in [("json", io::write_design(&document)), ("solidcraft", io::write_design_container(&document).unwrap())] {
+        for (extension, bytes) in [("json", io::write_design(&document).unwrap()), ("solidcraft", io::write_design_container(&document).unwrap())] {
             let source = dir.0.join(format!("supported-{index}.{extension}"));
             let destination = dir.0.join(format!("resaved-{index}.{extension}"));
             std::fs::write(&source, &bytes).unwrap();

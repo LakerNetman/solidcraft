@@ -693,6 +693,9 @@ impl Sketch {
     }
 
     fn build_link(&mut self, id: &str, lay: &Layout) -> Result<()> {
+        if self.curves.len().saturating_add(lay.curves.len()) > crate::model::MAX_CURVES {
+            return Err(SketchError::TooLarge);
+        }
         let mut idx: Vec<Option<usize>> = vec![None; lay.pts.len()];
         let mut point = |sk: &mut Sketch, li: usize| -> Result<usize> {
             if let Some(Some(i)) = idx.get(li) {

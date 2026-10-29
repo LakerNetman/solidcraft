@@ -45,6 +45,23 @@ fn deleted_joint_ids_are_not_reused_after_reopening() {
     }
 }
 
+/// A value given as an expression has the bound a number has: past it, the design would save
+/// and not reopen.
+#[test]
+fn joint_values_given_as_expressions_are_bounded_like_numbers() {
+    let mut s = Session::default();
+    run(&mut s, "component.create", json!({"name": "Part"}));
+    let (a, b) = (json!({"occurrence": 0, "point": [0, 0, 0]}), json!({"occurrence": "Part", "point": [0, 0, 0]}));
+    for values in [json!([1e12]), json!(["1e12 mm"])] {
+        let p = json!({"type": "slider", "a": a, "b": b, "values": values});
+        assert!(s.execute("joint.create", &p).is_err(), "{p}");
+    }
+    let joint = run(&mut s, "joint.create", json!({"type": "slider", "a": a, "b": b, "values": ["5 mm"]}))["joint"].as_u64().unwrap();
+    assert!(s.execute("joint.drive", &json!({"joint": joint, "value": "1e12 mm"})).is_err());
+    assert!(s.execute("joint.edit", &json!({"joint": joint, "offset": "1e12 mm"})).is_err());
+    solidcraft_doc::Document::from_json(&s.doc.to_saved_json().unwrap()).unwrap();
+}
+
 /// A hinge leaf (oracle 63's knuckle geometry): a 40 x 30 x 3 plate and an r4 knuckle along X
 /// at y = 33, z = 4.
 fn leaf(s: &mut Session, name: &str) {
@@ -1185,7 +1202,7 @@ fn hidden_joints_still_drive_and_are_saved_with_the_design() {
 fn older_designs_show_every_joint_and_new_joints_start_shown() {
     let (dir, path) = temp_design("legacy", "json");
     let mut s = hinged();
-    let mut legacy: Value = serde_json::from_slice(&solidcraft_io::write_design(&s.doc)).unwrap();
+    let mut legacy: Value = serde_json::from_slice(&solidcraft_io::write_design(&s.doc).unwrap()).unwrap();
     legacy["format"] = json!("solidcraft/19");
     legacy["visibility"] =
         json!({"hidden_bodies": [], "hidden_occurrences": [], "hidden_origin": ["XY"], "hidden_sketches": [], "shown_sketches": []});

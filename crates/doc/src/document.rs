@@ -2892,6 +2892,13 @@ impl Default for Document {
     }
 }
 
+/// The design JSON about to be saved opens again in this build, read exactly as a file is read.
+pub fn check_reopens(text: &str) -> Result<()> {
+    Document::from_json(text)
+        .map(|_| ())
+        .map_err(|e| DocError::Invalid(format!("the design was not saved because it could not be opened again: {e}")))
+}
+
 impl Document {
     /// The next shared identity, including auxiliary lists written by older versions or
     /// populated programmatically. Reading it does not reserve an id (used by joint previews).
@@ -3328,6 +3335,15 @@ impl Document {
     }
     pub fn to_json(&self) -> String {
         serde_json::to_string_pretty(self).unwrap_or_default()
+    }
+
+    /// The design file's JSON, refused when it could not be written or when this build could
+    /// not open it again (a value a command let through that the reader rejects): the save
+    /// reports why instead of writing a file that will not reopen.
+    pub fn to_saved_json(&self) -> Result<String> {
+        let text = serde_json::to_string_pretty(self).map_err(|e| DocError::Invalid(format!("the design could not be written: {e}")))?;
+        check_reopens(&text)?;
+        Ok(text)
     }
 
     pub fn feature(&self, id: u64) -> Option<&Feature> {

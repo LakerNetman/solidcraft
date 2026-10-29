@@ -294,6 +294,10 @@ fn write_container(
         canvases.push(value);
     }
     let mut replacements = fields([("features", Value::Array(features)), ("canvases", Value::Array(canvases))]);
+    // The reader opens this metadata with its HDR resources back inline: refuse a design it
+    // would not open, rather than write a file that cannot be reopened.
+    let reopened = replace(doc, replacements.clone()).map_err(invalid)?;
+    solidcraft_doc::check_reopens(&serde_json::to_string(&reopened).map_err(invalid)?)?;
     if !doc.render.resources.is_empty() {
         let mut resources = Map::new();
         for (id, resource) in doc.render.resources.iter() {
@@ -1059,6 +1063,23 @@ mod tests {
         assert!(read_design_geometry(&bytes).is_some());
     }
 
+    /// A design this build would not open again is refused by both writers, with the reason,
+    /// instead of written to a file that cannot be reopened.
+    #[test]
+    fn a_design_that_would_not_reopen_is_not_written() {
+        let mut doc = document();
+        assert!(write_design_container(&doc).is_ok() && crate::write_design(&doc).is_ok());
+        doc.named_views.push(solidcraft_doc::NamedView {
+            name: "Far".into(),
+            target: solidcraft_geom::Vec3::new(1e12, 0.0, 0.0),
+            distance: 1.0,
+            ..Default::default()
+        });
+        for error in [write_design_container(&doc).unwrap_err(), crate::write_design(&doc).unwrap_err()] {
+            assert!(error.to_string().contains("could not be opened again"), "{error}");
+        }
+    }
+
     /// A saved model of four features (5, 50, 20 and 1 ms) whose states each hold the eight
     /// bodies all of them share and eight of their own (a body each feature replaces). No
     /// document evaluated it.
@@ -1444,7 +1465,7 @@ mod tests {
         let bytes = write_design_container_with_preview(&doc, DesignCompression::Fast, Some(&DesignPreview { meshes: vec![too_large] })).unwrap();
         assert!(read_design_preview(&bytes).is_none());
         assert_eq!(crate::read_design(&bytes).unwrap(), doc);
-        assert!(read_design_preview(&crate::write_design(&doc)).is_none());
+        assert!(read_design_preview(&crate::write_design(&doc).unwrap()).is_none());
     }
 
     #[test]
@@ -1462,7 +1483,7 @@ mod tests {
         assert_eq!(entries.keys().filter(|n| n.ends_with(".png")).count(), 1);
         let json: Value = serde_json::from_slice(&entries["document.json"]).unwrap();
         assert_eq!(json["features"][2]["meshes"][0]["positions"], json!([]));
-        assert_eq!(crate::read_design(&crate::write_design(&reopened)).unwrap(), source);
+        assert_eq!(crate::read_design(&crate::write_design(&reopened).unwrap()).unwrap(), source);
         assert_eq!(write_design_container(&source).unwrap(), bytes, "deterministic archive");
         let compact = write_design_container_with_compression(&source, DesignCompression::Compact).unwrap();
         assert_eq!(crate::read_design(&compact).unwrap(), source);
@@ -1837,7 +1858,7 @@ mod tests {
             "com.acme.description": {"shop_id": 88123, "list": [1, 2.5, null, true, "x", {"deep": []}]},
         }))
         .unwrap();
-        let expected = crate::read_design(&crate::write_design(&doc)).unwrap();
+        let expected = crate::read_design(&crate::write_design(&doc).unwrap()).unwrap();
         assert_eq!(expected, doc);
         assert_eq!(crate::read_design(&write_design_container(&doc).unwrap()).unwrap(), expected);
     }
@@ -1854,7 +1875,7 @@ mod tests {
                 "environment":{"kind":"sky","rotation_rad":0.25,"intensity":0.5,"gradient":{"zenith":[0.4,0.2,0.1],"horizon":[0.7,0.6,0.3],"ground":[0.2,0.1,0.05]}}}}}
         }})).unwrap());
         assert!(doc.differs_only_in_render(&before));
-        for bytes in [crate::write_design(&doc), write_design_container(&doc).unwrap()] {
+        for bytes in [crate::write_design(&doc).unwrap(), write_design_container(&doc).unwrap()] {
             let reopened = crate::read_design(&bytes).unwrap();
             assert_eq!(reopened, doc);
             assert_eq!(reopened.render, doc.render);
@@ -1885,7 +1906,7 @@ mod tests {
         doc.render = Arc::new(render);
         let bytes = write_design_container(&doc).unwrap();
         assert_eq!(crate::read_design(&bytes).unwrap(), doc);
-        assert_eq!(crate::read_design(&crate::write_design(&doc)).unwrap(), doc);
+        assert_eq!(crate::read_design(&crate::write_design(&doc).unwrap()).unwrap(), doc);
         let original = parts(&bytes);
         let blob = format!("blobs/{id}.hdr");
         assert_eq!(original.keys().filter(|name| name.ends_with(".hdr")).count(), 1);
@@ -1984,7 +2005,7 @@ mod tests {
     }
 
     fn measure_storage(doc: &Document, label: &str) {
-        let json = crate::write_design(doc);
+        let json = crate::write_design(doc).unwrap();
         let container = write_design_container(doc).unwrap();
         let dir = std::env::var_os("CARGO_TARGET_DIR").map(std::path::PathBuf::from).unwrap_or_else(|| std::path::PathBuf::from("target"));
         std::fs::create_dir_all(&dir).unwrap();
@@ -1993,7 +2014,7 @@ mod tests {
         let mut timings = [Vec::new(), Vec::new(), Vec::new(), Vec::new()];
         for _ in 0..9 {
             let start = std::time::Instant::now();
-            std::hint::black_box(crate::write_design(doc));
+            std::hint::black_box(crate::write_design(doc).unwrap());
             timings[0].push(start.elapsed().as_secs_f64() * 1000.0);
             let start = std::time::Instant::now();
             std::hint::black_box(write_design_container(doc).unwrap());
@@ -2023,7 +2044,7 @@ mod tests {
             // Alternate ordering; include encoding, flushing, replacement and backup.
             for index in if round % 2 == 0 { [0, 1] } else { [1, 0] } {
                 let start = std::time::Instant::now();
-                let bytes = if index == 0 { crate::write_design(doc) } else { write_design_container(doc).unwrap() };
+                let bytes = if index == 0 { crate::write_design(doc).unwrap() } else { write_design_container(doc).unwrap() };
                 crate::write_atomic(&dir.join(format!("issue303-{label}-atomic-{index}.solidcraft")), &bytes, true).unwrap();
                 saves[index].push(start.elapsed().as_secs_f64() * 1000.0);
             }

@@ -684,11 +684,10 @@ pub fn read(s: &str) -> Result<Document> {
             return Err(DocError::Invalid("damaged design: body transfer owner must match its destination".into()));
         }
     }
-    // Fill in what older designs (and hand-edited files) may lack; a no-op otherwise.
     crate::format_offsets::validate_typed(&d)?;
-    normalise(&mut d)?;
     // `next_id` is trusted by nothing: a hand-edited or generated file may omit it or leave it stale,
     // and the next feature, component or occurrence would then reuse an id that is already taken.
+    // Raised before `normalise`, which adds the occurrences older designs lack under new ids.
     let largest =
         d.features.iter().map(|f| f.id).chain(d.components.iter().map(|c| c.id)).chain(d.occurrences.iter().map(|o| o.id)).max().unwrap_or(0);
     let floor = largest.checked_add(1).ok_or_else(|| DocError::Invalid("damaged design: the id space is exhausted".into()))?;
@@ -696,6 +695,8 @@ pub fn read(s: &str) -> Result<Document> {
     // These lists used to allocate independently. Keep their existing identities, but never
     // let a later deletion make them available again after loading an older design.
     d.next_id = d.next_item_id()?;
+    // Fill in what older designs (and hand-edited files) may lack; a no-op otherwise.
+    normalise(&mut d)?;
     d.format = format_string(FORMAT);
     d.format_pending = pending_names();
     Ok(d)
@@ -1053,7 +1054,7 @@ fn validate_freeform_offsets(value: &Value) -> Result<()> {
 
 /// Largest coordinate or size a design may hold (mm): a kilometre-scale part is already far
 /// outside what the kernel's tolerances serve.
-const MAX_REAL: f64 = 1e9;
+pub const MAX_REAL: f64 = 1e9;
 
 /// Every number the design itself holds is in range ([`check_numbers`]). `metadata` is left
 /// alone: it is other tools' data, kept as it is and never read as a number (#1015); parsing
@@ -2200,6 +2201,39 @@ mod tests {
         let mut v: Value = serde_json::from_str(&d.to_json()).unwrap();
         f(&mut v);
         v.to_string()
+    }
+
+    #[test]
+    fn occurrences_added_on_open_take_fresh_ids_and_the_design_reopens() {
+        let mut d = Document::new("Legacy");
+        d.add_component(None, 0).unwrap();
+        let b = d.add_component(None, 0).unwrap();
+        // No `next_id`, `b` without its occurrence, and the other occurrence on id 1.
+        let json = edited(&d, |v| {
+            v.as_object_mut().unwrap().remove("next_id");
+            let occurrences = v["occurrences"].as_array_mut().unwrap();
+            occurrences.retain(|o| o["component"] != b);
+            occurrences[0]["id"] = 1.into();
+        });
+        let back = read(&json).unwrap();
+        assert_eq!(back.occurrences.len(), 2);
+        assert!(back.occurrences.iter().any(|o| o.component == b));
+        assert!(all_unique(back.occurrences.iter().map(|o| o.id)), "{:?}", back.occurrences);
+        read(&back.to_json()).unwrap();
+    }
+
+    #[test]
+    fn a_design_that_would_not_reopen_is_refused_when_saved() {
+        let mut d = Document::new("Far");
+        d.to_saved_json().unwrap();
+        d.named_views.push(crate::NamedView {
+            name: "Far".into(),
+            target: solidcraft_geom::Vec3::new(1e12, 0.0, 0.0),
+            distance: 1.0,
+            ..Default::default()
+        });
+        let e = d.to_saved_json().unwrap_err().to_string();
+        assert!(e.contains("could not be opened again"), "{e}");
     }
 
     #[test]
